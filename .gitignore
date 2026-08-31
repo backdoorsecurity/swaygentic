@@ -1,0 +1,31 @@
+# Agent Brave profile (isolated; never commit)
+profiles/*
+!profiles/.gitkeep
+
+# Secrets / runtime
+run/
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Logs / caches
+*.log
+.cache/
+tmp/
