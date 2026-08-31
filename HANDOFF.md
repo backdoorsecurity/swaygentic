@@ -46,8 +46,8 @@ Local desktop project: (1) Brave Leo chats with Grok via xAI Chat Completions + 
 
 ### Not verified yet
 
-- `./scripts/smoke_xai.sh` — **blocked: no `XAI_API_KEY`**
-- Leo UI BYOM end-to-end (needs key + Nightly settings)
+- `./scripts/smoke_xai.sh` — key may now be present at `run/xai.env` (gitignored); **run this first**
+- Leo UI BYOM end-to-end (needs Nightly settings + successful API smoke)
 - Interactive headed Brave from Grok Build TUI (headless smoke worked)
 
 ---
@@ -56,8 +56,16 @@ Local desktop project: (1) Brave Leo chats with Grok via xAI Chat Completions + 
 
 ### 1. API key (required for Leo + xAI smoke)
 
+As of this handoff, a personal key was saved to **`run/xai.env`** (mode 0600, gitignored). Do not put keys in `.env.example` or commit them.
+
 ```bash
 cd ~/grok-in-browser
+./scripts/smoke_xai.sh
+```
+
+If the file is missing:
+
+```bash
 mkdir -p run
 cp -n .env.example run/xai.env
 chmod 600 run/xai.env
