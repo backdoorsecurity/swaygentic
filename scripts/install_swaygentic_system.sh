@@ -31,6 +31,7 @@ usage() {
 Usage: install.sh | install_swaygentic_system.sh [options]
 
   Host install for swaygentic Build + swaygentrc phone API (+ optional wayvnc).
+  Missing host packages (bubblewrap, wayvnc, …) are installed via apt/dnf/pacman/zypper.
   Failures always print step, line, command, and paths.
 
 Options:
@@ -172,16 +173,95 @@ need_cmd() {
   return 1
 }
 
-# --- 1. deps check ---
+# Map a missing command to distro package name(s). Empty = unknown / not installable here.
+pkg_for_cmd() {
+  local c="$1"
+  case "$c" in
+    systemctl) printf 'systemd' ;;
+    python3)   printf 'python3' ;;
+    curl)      printf 'curl' ;;
+    wayvnc)    printf 'wayvnc' ;;
+    xdg-dbus-proxy) printf 'wayvnc' ;;
+    bwrap)     printf 'bubblewrap' ;;
+    npx|node)  printf 'nodejs npm' ;;
+    *)         printf '' ;;
+  esac
+}
+
+as_root() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    return 1
+  fi
+}
+
+install_pkgs() {
+  # "$@" = package names
+  [[ $# -gt 0 ]] || return 0
+  log "  installing packages: $*"
+  if command -v apt-get >/dev/null 2>&1; then
+    run as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+  elif command -v dnf >/dev/null 2>&1; then
+    run as_root dnf install -y "$@"
+  elif command -v pacman >/dev/null 2>&1; then
+    run as_root pacman -Sy --noconfirm "$@"
+  elif command -v zypper >/dev/null 2>&1; then
+    run as_root zypper --non-interactive install "$@"
+  else
+    die "no supported package manager (apt-get/dnf/pacman/zypper); install manually: $*"
+  fi
+}
+
+ensure_cmds() {
+  # Ensure each command exists; collect missing → packages → install → re-check.
+  local c pkgs=() missing=() pkg
+  for c in "$@"; do
+    if command -v "$c" >/dev/null 2>&1; then
+      log "  ok  $c -> $(command -v "$c")"
+      continue
+    fi
+    log "  MISSING  $c"
+    missing+=("$c")
+    pkg="$(pkg_for_cmd "$c")"
+    if [[ -z "$pkg" ]]; then
+      die "required command '$c' missing and no package mapping; install it and re-run"
+    fi
+    # shellcheck disable=SC2206
+    pkgs+=($pkg)
+  done
+  if [[ ${#pkgs[@]} -eq 0 ]]; then
+    return 0
+  fi
+  # Deduplicate package list
+  local -A seen=()
+  local uniq=() p
+  for p in "${pkgs[@]}"; do
+    [[ -n "${seen[$p]:-}" ]] && continue
+    seen[$p]=1
+    uniq+=("$p")
+  done
+  install_pkgs "${uniq[@]}"
+  for c in "${missing[@]}"; do
+    if command -v "$c" >/dev/null 2>&1; then
+      log "  ok  $c -> $(command -v "$c") (installed)"
+    else
+      die "installed packages but '$c' still not on PATH"
+    fi
+  done
+}
+
+# --- 1. deps check / install ---
 step deps "deps check"
-MISSING=0
-need_cmd systemctl || MISSING=1
-need_cmd python3 || MISSING=1
-need_cmd curl || MISSING=1
-need_cmd tailscale || warn "tailscale not on PATH (credentials may fall back to 127.0.0.1)"
+REQUIRED_CMDS=(systemctl python3 curl bwrap)
 if [[ "$SKIP_WAYVNC" != 1 ]]; then
-  need_cmd wayvnc || MISSING=1
+  REQUIRED_CMDS+=(wayvnc)
 fi
+ensure_cmds "${REQUIRED_CMDS[@]}"
+need_cmd tailscale || warn "tailscale not on PATH (credentials may fall back to 127.0.0.1)"
+need_cmd npx || warn "npx not on PATH (install Node.js LTS for brave-mcp)"
 # adb optional until Phase 2
 if command -v adb >/dev/null 2>&1; then
   log "  ok  adb -> $(command -v adb)"
@@ -190,9 +270,6 @@ else
 fi
 if [[ ! -x "${SWAYGENTRC_GROK_BIN:-$HOME_DIR/.grok/bin/grok}" && ! -x "$HOME_DIR/.grok/downloads/grok-linux-x86_64" ]]; then
   warn "grok binary not found under ~/.grok — install Grok Build before smoke"
-fi
-if [[ "$MISSING" == 1 ]]; then
-  die "required commands missing; install them and re-run"
 fi
 
 # --- 2. launchers ---
