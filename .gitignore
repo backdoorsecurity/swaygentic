@@ -10,6 +10,7 @@ swaygentrc/server/run/*
 .env
 .env.*
 !.env.example
+.grok
 
 # Python
 __pycache__/
