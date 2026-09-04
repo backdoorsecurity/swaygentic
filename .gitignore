@@ -11,6 +11,7 @@ swaygentrc/server/run/*
 .env.*
 !.env.example
 .grok
+update-github.sh
 
 # Python
 __pycache__/
