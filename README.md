@@ -63,7 +63,7 @@ Agent pipe = ACP. Browser pipe = CDP. Tool surface = MCP.
 ### Install
 
 ```bash
-git clone https://github.com/backdoorsecurity/swaygentic/
+git clone https://github.com/backdoorsecurity/swaygentic.git/
 cd swaygentic/
 ./install.sh --non-interactive --skip-adb --verbose
 ```
