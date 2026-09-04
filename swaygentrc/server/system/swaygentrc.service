@@ -1,0 +1,17 @@
+[Unit]
+Description=swaygentrc phone API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@SERVER_DIR@
+ExecStart=@SYSTEM_DIR@/start_server.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+Environment=HOME=@HOME@
+Environment=PATH=/usr/bin:/usr/sbin:/usr/local/bin:/snap/bin:@HOME@/.local/bin:@HOME@/.grok/bin:/bin
+
+[Install]
+WantedBy=default.target

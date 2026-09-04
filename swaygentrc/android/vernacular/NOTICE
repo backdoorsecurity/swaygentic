@@ -1,0 +1,6 @@
+vernacular-vnc (MIT)
+Copyright (c) 2018 ShinyHut Solutions Ltd
+https://github.com/shinyhut/vernacular-vnc
+
+Android port in this module replaces java.awt image types with android.graphics.Bitmap
+for use inside app.swaygentrc. Protocol code remains derived from upstream MIT sources.

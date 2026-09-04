@@ -1,25 +1,45 @@
-# Grok-in-browser
+# Swaygentic
 
 Run **Grok** in the browser with a personal xAI API key (Brave Leo BYOM), and let **Grok Build** drive an isolated Brave Nightly profile over MCP — without forking Chromium.
 
-Read **[SCOPE.md](./SCOPE.md)** before changing architecture. Short rules: **[AGENTS.md](./AGENTS.md)**.
+Read **[SCOPE.md](./SCOPE.md)** before changing architecture. Short rules: **[AGENTS.md](./AGENTS.md)**. Live status: **[HANDOFF.md](./HANDOFF.md)**.
+
+## Install
+
+Reboot-safe host install for swaygentic + swaygentrc (launchers, user units, linger, smokes).
+
+```bash
+git clone https://github.com/backdoorsecurity/swaygentic/
+cd swaygentic/
+./install.sh --non-interactive --skip-adb --verbose
+```
+
+Use a **login session** as the target user (so `systemctl --user` works). Prefer a dedicated account if you do not want to touch your main desktop session.
+
+- Entry: [`install.sh`](./install.sh) → [`scripts/install_swaygentic_system.sh`](./scripts/install_swaygentic_system.sh)
+- Plan: [`docs/install-and-native-view-plan.md`](./docs/install-and-native-view-plan.md)
+- Failures print step / line / command; `--verbose` echoes commands
+- Phone APK (sideload): [`swaygentrc/app/swaygentrc_v0.9.4.apk`](./swaygentrc/app/swaygentrc_v0.9.4.apk)
 
 ## Two faces
 
 | Face | Who talks | Wire |
 | --- | --- | --- |
 | **Leo** | You ↔ Grok inside Brave’s assistant | Chat Completions → `https://api.x.ai/v1/chat/completions` (optional localhost proxy) |
-| **Build** | Grok Build ↔ Brave | MCP `brave-devtools` → CDP (pipe) on an isolated profile |
+| **Build** | Grok Build ↔ Brave (+ optional guest desktop) | `swaygentic` jail → MCP `brave-devtools` on `127.0.0.1:9222` + tab containers; **winctl** on QEMU VNC `:5902` |
+| **Phone** | Android ↔ agent + VIEW | swaygentrc HTTP/SSE + ACP; VIEW = wayvnc Tailscale `:5900` |
 
 They share: xAI key on disk/env, Brave Nightly, isolation rules.  
-They do **not** share: UI process, protocol, or a custom FIFO.
+They do **not** share: UI process, protocol, or a custom FIFO. Host wayvnc (`:5900`) is phone VIEW only — winctl never touches it.
 
 ## Quick start
 
-### 0. Clone / enter
+### 0. Clone / install
 
 ```bash
-cd grok-in-browser
+git clone https://github.com/backdoorsecurity/swaygentic/
+cd swaygentic/
+./install.sh --non-interactive --skip-adb
 ```
 
 ### 1. API key (Leo + smokes)
@@ -61,12 +81,28 @@ grok mcp doctor brave-devtools
 
 Then ask Grok Build to open `https://example.com` and take a screenshot via the **brave-devtools** tools (not via shell `xdotool`).
 
-MCP entrypoint: [`mcp/run_brave_mcp.sh`](./mcp/run_brave_mcp.sh)  
-Flags (single owner): [`mcp/brave_flags.sh`](./mcp/brave_flags.sh)  
-Profile: `profiles/agent/` (gitignored)
+**Build entrypoint:** [`mcp/swaygentic`](./mcp/swaygentic) (installed by `./install.sh`, or `./scripts/install_swaygentic.sh` alone) — runs real `grok` inside a loose bubblewrap jail. Does not replace `~/.grok/bin/grok`.
 
-Backend choice for Phase 2: **brave-mcp** only (`npx brave-mcp@latest` + Nightly binary path, isolated `user-data-dir`).  
-`--channel` and `--executable-path` are mutually exclusive in brave-mcp; we pin the Nightly binary.
+```bash
+./scripts/install_swaygentic.sh
+cd /path/to/swaygentic && swaygentic --trust
+```
+
+Open / new tab (always containerized): [`mcp/launch.sh`](./mcp/launch.sh) (alias [`mcp/new_tab.sh`](./mcp/new_tab.sh))
+
+```bash
+./mcp/launch.sh 'https://example.com'                                 # default container (misc)
+./mcp/launch.sh 'misc:https://rawze.com'
+./mcp/launch.sh 'brave-browser-nightly:misc:https://rawze.com'
+```
+
+MCP attach: [`mcp/run_brave_mcp.sh`](./mcp/run_brave_mcp.sh) → `--browser-url=http://127.0.0.1:9222` (TCP; not a named pipe)  
+Flags: [`mcp/brave_flags.sh`](./mcp/brave_flags.sh) (`--no-sandbox` + `--test-type` by default for the jail)  
+Profile: Nightly default `~/.config/BraveSoftware/Brave-Browser-Nightly`
+
+Backend choice for Phase 2: **brave-mcp** only (attach mode).
+
+**Guest desktop (winctl):** nested OS UI over QEMU VNC (default `:5902`). Setup venv once via `./scripts/smoke_winctl.sh`. Tools are `winctl__*`. Never points at host wayvnc `:5900`.
 
 ### 4. ACP (other programs drive Grok Build)
 
@@ -92,8 +128,13 @@ scripts/smoke_mcp_config.sh
 scripts/run_leo_proxy.sh
 proxy/leo_proxy.py
 mcp/brave_flags.sh
+mcp/jail-run.sh
+mcp/swaygentic
+mcp/ensure_brave.sh
+mcp/launch.sh
+mcp/new_tab.sh
 mcp/run_brave_mcp.sh
-profiles/          # gitignored agent profile
+scripts/install_swaygentic.sh
 .grok/config.toml
 ```
 
@@ -114,8 +155,9 @@ grep -n 'mcp_servers' .grok/config.toml
 | `smoke_xai.sh` 401 | Missing/bad key | Set `XAI_API_KEY` or `run/xai.env` |
 | MCP won’t start | No `npx` | Install Node.js LTS |
 | Brave won’t show | No Wayland | This project assumes Wayland (`WAYLAND_DISPLAY`); no X11 |
-| Agent uses your real bookmarks | Wrong profile | Must use `profiles/agent` via `brave_flags.sh` |
+| ensure_brave SingletonLock | Other Nightly owns profile without our debug port | Quit that Brave, or `SWG_FORCE_QUIT_BRAVE=1` in this VM |
+| Tab not in a container | Used CDP `new_page` | Use `mcp/launch.sh 'container:url'` instead |
 
 ## Out of scope (v1)
 
-Forking Brave/Chromium, X11/xdotool, custom `/tmp/grok.fifo`, driving your daily Brave profile, putting the API key in page JS. Phase 4 (brave-core) needs a written justification first — see SCOPE.md.
+Forking Brave/Chromium, X11/xdotool, custom `/tmp/grok.fifo`, putting the API key in page JS. Phase 4 (brave-core) needs a written justification first — see SCOPE.md.

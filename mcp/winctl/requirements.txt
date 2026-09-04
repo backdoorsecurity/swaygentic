@@ -1,0 +1,4 @@
+# winctl MCP (guest desktop RFB control)
+mcp==2.0.0
+vncdotool>=1.2.0
+pillow>=10.0.0

@@ -1,0 +1,21 @@
+[Unit]
+Description=wayvnc on Tailscale (swaygentrc VIEW)
+Documentation=file://@REPO_ROOT@/docs/haven-companion.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@REPO_ROOT@/scripts/wayvnc-tailscale.sh
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+Environment=HOME=@HOME@
+Environment=XDG_RUNTIME_DIR=%t
+Environment=WAYLAND_DISPLAY=wayland-1
+Environment=PATH=/usr/bin:/usr/sbin:/bin:@HOME@/.local/bin
+# Tunables (FPS, resize lock, host/port): see scripts/wayvnc.env.example
+EnvironmentFile=-%h/.config/wayvnc/env
+
+[Install]
+WantedBy=default.target

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Phase 2 smoke: MCP handshake, open example.com, take a screenshot.
-# Uses headless Brave by default (GIB_HEADLESS=1). Requires Node + Nightly.
+# Uses headless Brave by default (SWG_HEADLESS=1). Requires Node + Nightly.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,7 +8,7 @@ cd "$ROOT"
 
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export GIB_HEADLESS="${GIB_HEADLESS:-1}"
+export SWG_HEADLESS="${SWG_HEADLESS:-1}"
 
 if [[ ! -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" && -S "${XDG_RUNTIME_DIR}/wayland-1" ]]; then
   export WAYLAND_DISPLAY=wayland-1
@@ -61,7 +61,7 @@ send({
     "params": {
         "protocolVersion": "2024-11-05",
         "capabilities": {},
-        "clientInfo": {"name": "gib-smoke", "version": "0"},
+        "clientInfo": {"name": "swg-smoke", "version": "0"},
     },
 })
 init = read_msg(30)

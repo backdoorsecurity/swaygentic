@@ -1,0 +1,2 @@
+# Not loaded by default. session_rules() reads AGENTS.md at the repo root.
+# Set SWAYGENTRC_START_MESSAGE to this path only if you want to replace AGENTS.md.

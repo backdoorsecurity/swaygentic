@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# swaygentic — run Grok Build inside the loose agent+browser jail.
+# Does not replace ~/.grok/bin/grok (survives grok updates).
+#
+# Usage:
+#   swaygentic --trust
+#   swaygentic -p "open example.com"
+#   SWAYGENTIC_GROK=/path/to/grok swaygentic ...
+set -euo pipefail
+
+# Follow symlinks so ~/.local/bin/swaygentic still finds the repo jail.
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+JAIL="$ROOT/mcp/jail-run.sh"
+
+# Non-login agent shells skip ~/.zprofile — set builder ports / Wayland / winctl.
+# shellcheck source=../scripts/swaygentic-agent-env.sh
+source "$ROOT/scripts/swaygentic-agent-env.sh"
+
+# Brave prelude: Grok MCP attaches once at session start. If DevTools is down
+# then, brave-devtools stays dead for the whole session. Skip with
+# SWG_SKIP_BRAVE_PRELUDE=1 (attach-only / operator debug).
+swg_brave_prelude() {
+  if [[ "${SWG_SKIP_BRAVE_PRELUDE:-0}" == "1" ]]; then
+    echo "swaygentic: skipping Brave prelude (SWG_SKIP_BRAVE_PRELUDE=1)" >&2
+    return 0
+  fi
+  if "$ROOT/mcp/ensure_brave.sh"; then
+    return 0
+  fi
+  # Common after reboot: SingletonLock points at a dead pid, DevTools down.
+  echo "swaygentic: ensure_brave failed; retrying with SWG_FORCE_QUIT_BRAVE=1" >&2
+  SWG_FORCE_QUIT_BRAVE=1 "$ROOT/mcp/ensure_brave.sh"
+}
+
+resolve_grok() {
+  if [[ -n "${SWAYGENTIC_GROK:-}" && -x "${SWAYGENTIC_GROK}" ]]; then
+    printf '%s\n' "$SWAYGENTIC_GROK"
+    return 0
+  fi
+  local cand
+  for cand in \
+    "${HOME}/.grok/downloads/grok-linux-x86_64" \
+    "${HOME}/.grok/bin/grok"
+  do
+    if [[ -L "$cand" || -f "$cand" ]]; then
+      local real
+      real="$(readlink -f "$cand" 2>/dev/null || printf '%s' "$cand")"
+      if [[ -x "$real" ]]; then
+        printf '%s\n' "$real"
+        return 0
+      fi
+    fi
+  done
+  if command -v grok >/dev/null 2>&1; then
+    # Prefer non-wrapper path if `grok` on PATH is this script by mistake.
+    local which_grok
+    which_grok="$(command -v grok)"
+    if [[ "$(readlink -f "$which_grok" 2>/dev/null || true)" != "$(readlink -f "$0" 2>/dev/null || true)" ]]; then
+      printf '%s\n' "$(readlink -f "$which_grok")"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<EOF
+swaygentic — Grok Build inside the swaygentic bubblewrap jail.
+
+  swaygentic [grok-args...]
+
+Environment:
+  SWAYGENTIC_GROK            Absolute path to the real grok binary
+  SWAYGENTIC_OFF=1           Skip the jail and exec grok on the host (debug)
+  SWG_SKIP_BRAVE_PRELUDE=1   Do not ensure Brave/DevTools before starting grok
+
+Jail script: $JAIL
+EOF
+  exit 0
+fi
+
+GROK_REAL="$(resolve_grok)" || {
+  echo "swaygentic: real grok binary not found (set SWAYGENTIC_GROK)" >&2
+  exit 1
+}
+
+swg_brave_prelude
+
+# Host escape hatch for debugging the jail itself.
+if [[ "${SWAYGENTIC_OFF:-0}" == "1" ]]; then
+  exec "$GROK_REAL" "$@"
+fi
+
+exec "$JAIL" -- "$GROK_REAL" "$@"

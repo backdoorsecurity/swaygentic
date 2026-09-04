@@ -1,4 +1,4 @@
-# Grok-in-browser — project scope for Grok Build
+# Swaygentic — project scope for Grok Build
 
 Read this file before writing code. This is a new repo. It is not grokbox, but it may reuse grokbox ideas.
 
@@ -20,13 +20,15 @@ They do not share: UI process, protocol, or “named pipe” format.
 
 ## In scope (do these)
 
+- **One-shot host installer** (`./install.sh`) for swaygentic + swaygentrc: launchers, user units, linger, smokes; reboot-safe. Prefer a dedicated account — not your live operator checkout.
 - Document and script Brave Nightly + Leo BYOM pointed at `https://api.x.ai/v1/chat/completions`.
 - A tiny local compatibility proxy if Leo’s request body makes xAI return 400 (strip/override `temperature` and similar).
 - An MCP server Grok Build can call to drive Brave (navigate, click, type, screenshot, tabs). Prefer wrapping existing tools (`brave-mcp`, Browser Use, or grokbox/osctl) over writing a new CDP stack.
+- Optional **winctl** MCP for nested guest desktop control over QEMU VNC (pixels + virsh keys). Not a second browser stack; never touch host wayvnc (phone VIEW).
 - ACP wiring so Grok Build is reachable as `grok agent stdio` and/or `grok agent serve --bind 127.0.0.1:2419`.
 - A project `.grok/config.toml` that registers the browser MCP server.
-- `AGENTS.md` rules for the coding agent: use tools, do not shell-out xdotool, do not hit the user’s real Brave profile.
-- Isolated Brave/Chromium profile for the agent (copy the grokbox idea: `*-osctl` user-data-dir, `--ozone-platform=wayland`, `--remote-debugging-pipe`).
+- `AGENTS.md` rules for the coding agent: use tools, do not shell-out xdotool.
+- Brave Nightly default profile + loopback DevTools (`127.0.0.1:9222` TCP — not a named pipe). Build face prefers **`swaygentic`**: loose bubblewrap jail around real `grok` (agent + browser). Project owns Brave (`mcp/ensure_brave.sh`); `brave-mcp` **attaches**. Open/new-tab via `mcp/launch.sh` (tab containers). In-jail Brave uses `--no-sandbox` + `--test-type`.
 - README with copy-paste setup, curl smoke test, and failure modes.
 
 ## Out of scope (do not do)
@@ -51,14 +53,17 @@ Human
                     model: grok-4.6   (or current xAI id)
 
 Grok Build (TUI or ACP client)
-  └─ MCP: browser / osctl tools
-        └─ Brave Nightly isolated profile
-              └─ CDP over --remote-debugging-pipe
-                 (not TCP :9222 on all interfaces)
+  └─ MCP: brave-devtools + winctl
+        ├─ Brave Nightly (tab container via mcp/launch.sh)
+        │     └─ CDP on 127.0.0.1:9222 (MCP attaches; not 0.0.0.0)
+        └─ Guest desktop (mcp/winctl)
+              └─ QEMU VNC 127.0.0.1:5902 (not host wayvnc :5900)
 
-Optional later
-  └─ grok agent serve --bind 127.0.0.1:2419
-        └─ phone / local UI  (grokrc-style)
+Phone face (swaygentrc)
+  └─ Android APK → HTTP/SSE (Tailscale, persisted high port)
+        └─ swaygentrc/server → grok agent serve 127.0.0.1:2419 (via swaygentic)
+              └─ project MCP (.grok/config.toml, read-only)
+        └─ VIEW → wayvnc Tailscale :5900
 ```
 
 Pipes that already exist — use them:
@@ -142,7 +147,7 @@ Done when: a page summary in Leo returns Grok text using the operator’s key.
   - A. wrap grokbox/osctl if that tree is on disk
   - B. `brave-mcp` / Chrome DevTools MCP against an isolated Nightly profile
   - C. Browser Use plugin
-- Isolated profile dir under the project (`~/.config/brave-osctl` or `./profiles/agent`)
+- Profile: Nightly default (`~/.config/BraveSoftware/Brave-Browser-Nightly`); `mcp/launch.sh` + `SWG_CONTAINER` (default `misc`); MCP `--browser-url` attach
 - Launch flags live in one function, one file
 - Grok Build project MCP points at that launcher
 - Tools: at least `look`/`screenshot`, `goto`/`navigate`, `click`, `type`/`fill`, `tabs`
@@ -171,7 +176,6 @@ scripts/smoke_xai.sh
 scripts/run_leo_proxy.sh
 proxy/                   ← Phase 1 compatibility shim (only if needed)
 mcp/                     ← Phase 2 launcher / thin wrapper, not a second CDP stack
-profiles/                ← gitignored agent profile
 .grok/config.toml
 ```
 

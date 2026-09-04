@@ -1,0 +1,20 @@
+[Unit]
+Description=Headless Sway for agent VNC
+# Do NOT After=default.target while also WantedBy=default.target — that cycles with wayvnc.
+After=basic.target
+Before=wayvnc.service
+
+[Service]
+Type=simple
+Environment=WLR_BACKENDS=headless
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_CURRENT_DESKTOP=sway
+Environment=WLR_RENDERER=pixman
+Environment=WLR_NO_HARDWARE_CURSORS=1
+ExecStart=/usr/bin/sway -c %h/.config/sway/config-headless
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

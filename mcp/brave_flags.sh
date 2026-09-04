@@ -3,55 +3,112 @@
 # Other scripts source this file. Do not duplicate these flags elsewhere.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Prefer an already-set ROOT (ensure_brave/launch set it); else resolve from this file.
+if [[ -z "${ROOT:-}" || "$ROOT" == "/" ]]; then
+  _SWG_FLAGS="${BASH_SOURCE[0]:-$0}"
+  ROOT="$(cd "$(dirname "$_SWG_FLAGS")/.." && pwd)"
+  unset _SWG_FLAGS
+fi
 
-# Isolated agent profile — never the operator's daily Brave profile.
-export GIB_PROFILE_DIR="${GIB_PROFILE_DIR:-$ROOT/profiles/agent}"
+# Nightly's real profile (test VM). Override with SWG_PROFILE_DIR.
+# Isolation: Brave tab containers via --container / launch.sh — not a second user-data-dir.
+export SWG_PROFILE_DIR="${SWG_PROFILE_DIR:-$HOME/.config/BraveSoftware/Brave-Browser-Nightly}"
 
 # Prefer Nightly on PATH; allow override.
-export GIB_BRAVE_BIN="${GIB_BRAVE_BIN:-$(command -v brave-browser-nightly || command -v brave-browser || true)}"
+export SWG_BRAVE_BIN="${SWG_BRAVE_BIN:-$(command -v brave-browser-nightly || command -v brave-browser || true)}"
 
 # Wayland-only desktop (KWin/Plasma / sway). No X11 path.
-export GIB_OZONE_PLATFORM="${GIB_OZONE_PLATFORM:-wayland}"
+export SWG_OZONE_PLATFORM="${SWG_OZONE_PLATFORM:-wayland}"
 
-# Viewport for agent sessions
-export GIB_VIEWPORT="${GIB_VIEWPORT:-1280x720}"
+# Viewport for agent sessions (MCP attach metadata / docs)
+export SWG_VIEWPORT="${SWG_VIEWPORT:-1280x720}"
 
-mkdir -p "$GIB_PROFILE_DIR"
+# Default Brave tab container for mcp/launch.sh when none is specified.
+export SWG_CONTAINER="${SWG_CONTAINER:-misc}"
 
-# Args passed to `npx brave-mcp@latest` (one array, one owner).
-# brave-mcp launches Brave with pipe-based CDP by default — never bind debug on all interfaces.
-# Note: --channel and --executable-path are mutually exclusive in brave-mcp.
-gib_brave_mcp_args() {
+# Loopback-only remote debugging for MCP attach. Never bind 0.0.0.0.
+export SWG_DEBUG_PORT="${SWG_DEBUG_PORT:-9222}"
+export SWG_DEBUG_HOST="${SWG_DEBUG_HOST:-127.0.0.1}"
+
+# Runtime files (gitignored via run/)
+export SWG_RUN_DIR="${SWG_RUN_DIR:-$ROOT/run}"
+export SWG_BRAVE_PID_FILE="${SWG_BRAVE_PID_FILE:-$SWG_RUN_DIR/brave.pid}"
+export SWG_BRAVE_LOG_FILE="${SWG_BRAVE_LOG_FILE:-$SWG_RUN_DIR/brave.log}"
+
+swg_debug_url() {
+  printf 'http://%s:%s' "${SWG_DEBUG_HOST}" "${SWG_DEBUG_PORT}"
+}
+
+# Shared Brave process flags (profile + Wayland + loopback DevTools).
+swg_brave_common_args() {
   local args=(
-    "-y"
-    "brave-mcp@latest"
-    "--user-data-dir=${GIB_PROFILE_DIR}"
-    "--viewport=${GIB_VIEWPORT}"
-    "--performance-crux=false"
-    "--brave-arg=--ozone-platform=${GIB_OZONE_PLATFORM}"
-    "--brave-arg=--disable-features=TranslateUI"
+    "--user-data-dir=${SWG_PROFILE_DIR}"
+    "--ozone-platform=${SWG_OZONE_PLATFORM}"
+    "--remote-debugging-address=${SWG_DEBUG_HOST}"
+    "--remote-debugging-port=${SWG_DEBUG_PORT}"
+    # QXL / no 3D accel: avoid GPU compositing flicker in this VM.
+    "--disable-gpu"
+    "--disable-gpu-compositing"
   )
-  if [[ -n "${GIB_BRAVE_BIN}" ]]; then
-    args+=("--executable-path=${GIB_BRAVE_BIN}")
-  else
-    args+=("--channel=nightly")
+  # Inside swaygentic/bwrap the outer Chromium sandbox is unusable; jail is the sandbox.
+  # Host-only runs can set SWG_NO_SANDBOX=0. --test-type hides the unsupported-flag infobar.
+  if [[ "${SWG_NO_SANDBOX:-1}" == "1" ]]; then
+    args+=("--no-sandbox")
+    if [[ "${SWG_TEST_TYPE:-1}" == "1" ]]; then
+      args+=("--test-type")
+    fi
   fi
-  if [[ "${GIB_HEADLESS:-0}" == "1" ]]; then
-    args+=("--headless=true")
+  if [[ "${SWG_HEADLESS:-0}" == "1" ]]; then
+    args+=("--headless=new")
   fi
-  # Containers / bubblewrap often need the outer Chromium sandbox disabled.
-  if [[ "${GIB_NO_SANDBOX:-1}" == "1" ]]; then
-    args+=("--brave-arg=--no-sandbox")
-  fi
-  # Extra brave args from env (space-separated), optional.
-  if [[ -n "${GIB_EXTRA_BRAVE_ARGS:-}" ]]; then
+  if [[ -n "${SWG_EXTRA_BRAVE_ARGS:-}" ]]; then
     # shellcheck disable=SC2206
-    local extra=( ${GIB_EXTRA_BRAVE_ARGS} )
-    local a
-    for a in "${extra[@]}"; do
-      args+=("--brave-arg=${a}")
-    done
+    local extra=( ${SWG_EXTRA_BRAVE_ARGS} )
+    args+=("${extra[@]}")
   fi
   printf '%s\n' "${args[@]}"
+}
+
+# Direct Brave argv (we own the process). Caller prepends $SWG_BRAVE_BIN.
+swg_brave_browser_argv() {
+  if [[ -z "${SWG_BRAVE_BIN}" || ! -x "${SWG_BRAVE_BIN}" ]]; then
+    echo "Brave Nightly not found. Install it or set SWG_BRAVE_BIN." >&2
+    return 1
+  fi
+  printf '%s\n' "${SWG_BRAVE_BIN}"
+  swg_brave_common_args
+}
+
+# Args passed to `npx` — attach mode (Brave already running).
+# Pin the package (default 1.8.0) so spawn is not a registry "@latest" check.
+# Override with SWG_BRAVE_MCP_PKG=brave-mcp@x.y.z if needed.
+# brave-mcp must not launch a second profile instance.
+swg_brave_mcp_args() {
+  local args=(
+    "-y"
+    "${SWG_BRAVE_MCP_PKG:-brave-mcp@1.8.0}"
+    "--browser-url=$(swg_debug_url)"
+    "--viewport=${SWG_VIEWPORT}"
+    "--performance-crux=false"
+  )
+  printf '%s\n' "${args[@]}"
+}
+
+# Resolve a browser alias token to an executable path (or empty if unknown).
+swg_resolve_browser_alias() {
+  local token="${1,,}"
+  case "$token" in
+    "" | brave-browser-nightly | nightly | brave-nightly)
+      printf '%s\n' "$(command -v brave-browser-nightly || true)"
+      ;;
+    brave-browser | brave | brave-browser-stable | release)
+      printf '%s\n' "$(command -v brave-browser || command -v brave || true)"
+      ;;
+    brave-browser-beta | beta)
+      printf '%s\n' "$(command -v brave-browser-beta || true)"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }

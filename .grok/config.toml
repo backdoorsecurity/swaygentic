@@ -1,10 +1,22 @@
-# Project-scoped Grok Build config for grok-in-browser.
-# Trust this folder (`grok --trust`) so project MCP servers load.
+# Project-scoped Grok Build config — advisor (browser).
+# Delegate Brave → bravectl, guest → winctl. No MCP servers in this session.
+
+[mcp]
+max_output_bytes = 1500000
 
 [mcp_servers.brave-devtools]
-# Relative to project root when this folder is trusted.
 command = "bash"
 args = ["mcp/run_brave_mcp.sh"]
-enabled = true
+enabled = false
 startup_timeout_sec = 90
 tool_timeout_sec = 120
+
+[mcp_servers.winctl]
+command = "bash"
+args = ["mcp/winctl/launch.sh"]
+enabled = false
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+
+[permission]
+allow = []

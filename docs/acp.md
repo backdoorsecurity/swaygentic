@@ -5,7 +5,7 @@ In this project, the “named pipe” to the coding agent is **ACP**, not a cust
 ## stdio (local process)
 
 ```bash
-cd /path/to/grok-in-browser
+cd /path/to/swaygentic
 grok agent --always-approve stdio
 ```
 
@@ -23,6 +23,10 @@ grok agent --always-approve serve --bind 127.0.0.1:2419 --secret "$GROK_AGENT_SE
 ```
 
 Bind loopback only unless you intentionally expose more. Pass `--secret` or set `GROK_AGENT_SECRET`.
+
+## Phone (swaygentrc)
+
+The Android app does **not** speak ACP. It uses the HTTP facade under `swaygentrc/server/` (`SWAYGENTRC_FOREGROUND=1 ./swaygentrc/server/system/start_server.sh`). That process opens ACP WebSocket to this bind. See `swaygentrc/README.md`.
 
 ## Done when
 

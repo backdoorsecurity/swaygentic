@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# swaygentic-unsafe — same as swaygentic, but skips the bubblewrap jail.
+# Runs real grok on the host (full $HOME / no jail-denied overlays).
+#
+# Usage:
+#   swaygentic-unsafe --trust
+#   swaygentic-unsafe -p "open example.com"
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+SAFE="$ROOT/mcp/swaygentic"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'HELP'
+swaygentic-unsafe — Grok Build WITHOUT the swaygentic bubblewrap jail.
+
+  swaygentic-unsafe [grok-args...]
+
+Equivalent to:  SWAYGENTIC_OFF=1 swaygentic [grok-args...]
+
+Use when you need host paths (e.g. ~/.ZAP, tools, SSH) that the jail hides.
+Prefer plain swaygentic for normal Build sessions.
+HELP
+  exit 0
+fi
+
+if [[ ! -x "$SAFE" ]]; then
+  echo "swaygentic-unsafe: missing $SAFE" >&2
+  exit 1
+fi
+
+export SWAYGENTIC_OFF=1
+exec "$SAFE" "$@"

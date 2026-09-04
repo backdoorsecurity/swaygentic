@@ -1,0 +1,552 @@
+#!/usr/bin/env python3
+"""Light shared blackboard for bravectl / winctl / advisor.
+
+Default DB: /srv/arena/blackboard/board.sqlite  (override: ARENA_BOARD)
+Legacy symlink: /srv/arena/swaygentic → blackboard.
+
+Live comms v3: `messages` table (body) + `/srv/arena/socket/` (wake).
+`claims` remains for optional debate/votes — not the doorbell.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sqlite3
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+DEFAULT_DB = Path("/srv/arena/blackboard/board.sqlite")
+KINDS = ("note", "debate", "claim", "proposal", "vote", "patch-ok", "status", "blocked", "heartbeat")
+STATUSES = ("open", "accepted", "rejected", "superseded", "done", "blocked")
+AGENTS = ("bravectl", "winctl", "advisor", "forge", "loom")
+AGENT_ALIASES = {"judge": "advisor", "browser": "advisor"}
+
+
+def db_path() -> Path:
+    return Path(os.environ.get("ARENA_BOARD", str(DEFAULT_DB)))
+
+
+def resolve_since(conn: sqlite3.Connection, since: str | None) -> str:
+    """Cursor for created_at > since. Accepts ISO timestamp or an existing claim id."""
+    if not since:
+        return ""
+    row = conn.execute("SELECT created_at FROM claims WHERE id = ?", (since,)).fetchone()
+    if row:
+        return str(row["created_at"])
+    return since
+
+
+def connect() -> sqlite3.Connection:
+    path = db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path), timeout=10)
+    conn.row_factory = sqlite3.Row
+    # DELETE journal: shared multi-user file under /srv/arena (WAL needs extra -wal perms).
+    conn.execute("PRAGMA journal_mode=DELETE")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS claims (
+          id TEXT PRIMARY KEY,
+          who TEXT NOT NULL,
+          dest TEXT NOT NULL DEFAULT 'all',
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          title TEXT NOT NULL DEFAULT '',
+          body TEXT NOT NULL DEFAULT '',
+          refs TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_claims_created ON claims(created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status, kind)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          src TEXT NOT NULL,
+          dst TEXT NOT NULL,
+          body TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          acked_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_messages_dst_unacked
+          ON messages(dst, id) WHERE acked_at IS NULL
+        """
+    )
+    return conn
+
+
+def norm_agent(name: str | None, *, field: str = "agent") -> str:
+    raw = (name or default_who()).strip().lower()
+    mapped = AGENT_ALIASES.get(raw, raw)
+    if mapped not in AGENTS:
+        raise ValueError(f"bad {field} {name!r}; choose from {', '.join(AGENTS)}")
+    return mapped
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def stamp_local() -> str:
+    # Local wall clock for human msg ids (matches arena inbox convention).
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def slugify(text: str, fallback: str = "item") -> str:
+    out = []
+    for ch in text.lower().strip():
+        if ch.isalnum():
+            out.append(ch)
+        elif ch in "-_ \t" and (not out or out[-1] != "-"):
+            out.append("-")
+    s = "".join(out).strip("-")
+    return (s[:40] or fallback)
+
+
+def default_who() -> str:
+    return os.environ.get("ARENA_WHO") or os.environ.get("USER") or "unknown"
+
+
+def make_id(who: str, title: str, kind: str) -> str:
+    return f"{who}-{stamp_local()}-{slugify(title or kind)}"
+
+
+def cmd_init(_args: argparse.Namespace) -> int:
+    conn = connect()
+    conn.commit()
+    conn.close()
+    print(f"board ready: {db_path()}")
+    return 0
+
+
+def cmd_post(args: argparse.Namespace) -> int:
+    who = args.who or default_who()
+    kind = args.kind
+    if kind not in KINDS:
+        print(f"bad kind {kind!r}; choose from {', '.join(KINDS)}", file=sys.stderr)
+        return 2
+    status = args.status
+    if status not in STATUSES:
+        print(f"bad status {status!r}; choose from {', '.join(STATUSES)}", file=sys.stderr)
+        return 2
+    title = (args.title or "").strip()
+    body = args.body
+    if body == "-":
+        body = sys.stdin.read()
+    body = (body or "").strip()
+    if not title and not body:
+        print("need --title and/or --body", file=sys.stderr)
+        return 2
+    cid = args.id or make_id(who, title or kind, kind)
+    ts = now_iso()
+    conn = connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO claims (id, who, dest, kind, status, title, body, refs, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                cid,
+                who,
+                args.to,
+                kind,
+                status,
+                title,
+                body,
+                args.refs or "",
+                ts,
+                ts,
+            ),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        print(f"id already exists: {cid}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    print(cid)
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    conn = connect()
+    clauses: list[str] = []
+    params: list[object] = []
+    if args.kind:
+        clauses.append("kind = ?")
+        params.append(args.kind)
+    if args.status:
+        clauses.append("status = ?")
+        params.append(args.status)
+    if args.who:
+        clauses.append("who = ?")
+        params.append(args.who)
+    if args.open:
+        clauses.append("status = 'open'")
+    if args.since:
+        clauses.append("created_at > ?")
+        params.append(resolve_since(conn, args.since))
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    order = "ASC" if args.since else "DESC"
+    sql = f"SELECT * FROM claims{where} ORDER BY created_at {order} LIMIT ?"
+    params.append(args.limit)
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    if args.oneline:
+        for r in rows:
+            title = r["title"] or r["body"][:60].replace("\n", " ")
+            print(f"{r['id']} | {r['who']} | {r['kind']} | {r['status']} | {title}")
+        return 0
+    if not rows:
+        print("(empty)")
+        return 0
+    for r in rows:
+        print(f"[{r['status']}] {r['id']}")
+        print(f"  from={r['who']} to={r['dest']} kind={r['kind']} at={r['created_at']}")
+        if r["refs"]:
+            print(f"  refs={r['refs']}")
+        if r["title"]:
+            print(f"  title: {r['title']}")
+        if r["body"]:
+            preview = r["body"] if args.full else r["body"][:240]
+            for line in preview.splitlines() or [preview]:
+                print(f"  | {line}")
+            if not args.full and len(r["body"]) > 240:
+                print("  | …")
+        print()
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    conn = connect()
+    row = conn.execute("SELECT * FROM claims WHERE id = ?", (args.id,)).fetchone()
+    conn.close()
+    if not row:
+        print(f"not found: {args.id}", file=sys.stderr)
+        return 1
+    print(f"id: {row['id']}")
+    print(f"from: {row['who']}")
+    print(f"to: {row['dest']}")
+    print(f"kind: {row['kind']}")
+    print(f"status: {row['status']}")
+    print(f"created_at: {row['created_at']}")
+    print(f"updated_at: {row['updated_at']}")
+    if row["refs"]:
+        print(f"refs: {row['refs']}")
+    if row["title"]:
+        print(f"title: {row['title']}")
+    print()
+    print(row["body"])
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    if args.status not in STATUSES:
+        print(f"bad status {args.status!r}; choose from {', '.join(STATUSES)}", file=sys.stderr)
+        return 2
+    conn = connect()
+    cur = conn.execute(
+        "UPDATE claims SET status = ?, updated_at = ? WHERE id = ?",
+        (args.status, now_iso(), args.id),
+    )
+    conn.commit()
+    conn.close()
+    if cur.rowcount == 0:
+        print(f"not found: {args.id}", file=sys.stderr)
+        return 1
+    print(f"{args.id} -> {args.status}")
+    return 0
+
+
+def _fetch_since(
+    conn: sqlite3.Connection, last: str, kind: str | None
+) -> list[sqlite3.Row]:
+    clauses = ["created_at > ?"]
+    params: list[object] = [last]
+    if kind:
+        clauses.append("kind = ?")
+        params.append(kind)
+    where = " AND ".join(clauses)
+    return conn.execute(
+        f"""
+        SELECT id, who, kind, status, title, created_at
+        FROM claims
+        WHERE {where}
+        ORDER BY created_at ASC
+        """,
+        params,
+    ).fetchall()
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Poll for new rows. --since <iso|id> sets the cursor; --once prints and exits."""
+    conn = connect()
+    if args.since:
+        last = resolve_since(conn, args.since)
+    else:
+        last = conn.execute(
+            "SELECT COALESCE(MAX(created_at), '') FROM claims"
+        ).fetchone()[0]
+    if args.once:
+        rows = _fetch_since(conn, last, args.kind)
+        conn.close()
+        for r in rows:
+            title = r["title"] or ""
+            print(
+                f"{r['created_at']} {r['who']} {r['kind']}/{r['status']} {r['id']} {title}".rstrip()
+            )
+        return 0
+    conn.close()
+    print(
+        f"watching {db_path()} (ctrl-c to stop); since={last or 'beginning'}"
+        + (f" kind={args.kind}" if args.kind else ""),
+        file=sys.stderr,
+    )
+    try:
+        while True:
+            time.sleep(args.interval)
+            conn = connect()
+            rows = _fetch_since(conn, last, args.kind)
+            conn.close()
+            for r in rows:
+                last = r["created_at"]
+                title = r["title"] or ""
+                print(
+                    f"{r['created_at']} {r['who']} {r['kind']}/{r['status']} {r['id']} {title}".rstrip()
+                )
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        print("", file=sys.stderr)
+        return 0
+
+
+def insert_message(src: str, dst: str, body: str) -> int:
+    src = norm_agent(src, field="src")
+    dst = norm_agent(dst, field="dst")
+    body = (body or "").strip()
+    if not body:
+        raise ValueError("empty body")
+    ts = now_iso()
+    conn = connect()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO messages (src, dst, body, created_at, acked_at)
+            VALUES (?, ?, ?, ?, NULL)
+            """,
+            (src, dst, body, ts),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def fetch_message(mid: int) -> sqlite3.Row | None:
+    conn = connect()
+    try:
+        return conn.execute("SELECT * FROM messages WHERE id = ?", (mid,)).fetchone()
+    finally:
+        conn.close()
+
+
+def cmd_msg(args: argparse.Namespace) -> int:
+    body = args.body
+    if body == "-":
+        body = sys.stdin.read()
+    try:
+        mid = insert_message(args.who, args.to, body)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print(mid)
+    return 0
+
+
+def cmd_unread(args: argparse.Namespace) -> int:
+    try:
+        dst = norm_agent(args.to, field="to")
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    conn = connect()
+    rows = conn.execute(
+        """
+        SELECT * FROM messages
+        WHERE dst = ? AND acked_at IS NULL
+        ORDER BY id ASC
+        LIMIT ?
+        """,
+        (dst, args.limit),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        if not args.oneline:
+            print("(empty)")
+        return 0
+    for r in rows:
+        if args.oneline:
+            preview = r["body"].replace("\n", " ")[:80]
+            print(f"{r['id']} | {r['src']} -> {r['dst']} | {r['created_at']} | {preview}")
+            continue
+        print(f"id={r['id']} {r['src']} -> {r['dst']} at={r['created_at']}")
+        if args.full:
+            for line in r["body"].splitlines() or [r["body"]]:
+                print(f"  | {line}")
+        else:
+            preview = r["body"][:240].replace("\n", " ")
+            print(f"  | {preview}" + ("…" if len(r["body"]) > 240 else ""))
+        print()
+    return 0
+
+
+def cmd_show_msg(args: argparse.Namespace) -> int:
+    row = fetch_message(args.id)
+    if not row:
+        print(f"not found: {args.id}", file=sys.stderr)
+        return 1
+    acked = row["acked_at"] or ""
+    print(f"id: {row['id']}")
+    print(f"from: {row['src']}")
+    print(f"to: {row['dst']}")
+    print(f"created_at: {row['created_at']}")
+    print(f"acked_at: {acked or '(unacked)'}")
+    print()
+    print(row["body"])
+    return 0
+
+
+def cmd_ack(args: argparse.Namespace) -> int:
+    ts = now_iso()
+    conn = connect()
+    cur = conn.execute(
+        """
+        UPDATE messages SET acked_at = ?
+        WHERE id = ? AND acked_at IS NULL
+        """,
+        (ts, args.id),
+    )
+    conn.commit()
+    conn.close()
+    if cur.rowcount == 0:
+        row = fetch_message(args.id)
+        if not row:
+            print(f"not found: {args.id}", file=sys.stderr)
+            return 1
+        print(f"{args.id} already acked at {row['acked_at']}")
+        return 0
+    print(f"{args.id} acked")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="arena-board",
+        description="Light SQLite blackboard for /srv/arena/blackboard",
+    )
+    p.add_argument(
+        "--db",
+        help="sqlite path (default ARENA_BOARD or /srv/arena/blackboard/board.sqlite)",
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("init", help="create DB/schema")
+    s.set_defaults(func=cmd_init)
+
+    s = sub.add_parser("post", help="add a claim/note")
+    s.add_argument("--who", help="author (default $ARENA_WHO or $USER)")
+    s.add_argument("--to", default="all", help="dest: all|forge|loom|judge")
+    s.add_argument("--kind", default="note", choices=KINDS)
+    s.add_argument("--status", default="open", choices=STATUSES)
+    s.add_argument("--title", default="")
+    s.add_argument("--body", default="", help="text, or '-' to read stdin")
+    s.add_argument("--refs", default="", help="comma-separated message ids")
+    s.add_argument("--id", help="override id (default auto)")
+    s.set_defaults(func=cmd_post)
+
+    s = sub.add_parser("list", help="list recent claims")
+    s.add_argument("--kind", choices=KINDS)
+    s.add_argument("--status", choices=STATUSES)
+    s.add_argument("--who")
+    s.add_argument("--open", action="store_true", help="status=open only")
+    s.add_argument(
+        "--since",
+        help="only rows with created_at > ISO timestamp or claim id",
+    )
+    s.add_argument("--limit", type=int, default=20)
+    s.add_argument("--full", action="store_true")
+    s.add_argument("--oneline", action="store_true")
+    s.set_defaults(func=cmd_list)
+
+    s = sub.add_parser("show", help="show one claim")
+    s.add_argument("id")
+    s.set_defaults(func=cmd_show)
+
+    s = sub.add_parser("status", help="set claim status")
+    s.add_argument("id")
+    s.add_argument("status", choices=STATUSES)
+    s.set_defaults(func=cmd_status)
+
+    s = sub.add_parser("watch", help="poll for new claims")
+    s.add_argument(
+        "--since",
+        help="start cursor: ISO timestamp or claim id (default: now/latest)",
+    )
+    s.add_argument("--kind", choices=KINDS, help="only this kind")
+    s.add_argument(
+        "--once",
+        action="store_true",
+        help="print new rows since cursor and exit (no loop)",
+    )
+    s.add_argument("--interval", type=float, default=2.0)
+    s.set_defaults(func=cmd_watch)
+
+    s = sub.add_parser("msg", help="insert a socket-wake message; prints numeric id")
+    s.add_argument("--who", help="src (default $ARENA_WHO or $USER; browser/judge→advisor)")
+    s.add_argument("--to", required=True, help="dst: forge|loom|advisor")
+    s.add_argument("--body", default="", help="text, or '-' to read stdin")
+    s.set_defaults(func=cmd_msg)
+
+    s = sub.add_parser("unread", help="list unacked messages for one dest")
+    s.add_argument("--to", required=True, help="dst: forge|loom|advisor")
+    s.add_argument("--limit", type=int, default=50)
+    s.add_argument("--full", action="store_true")
+    s.add_argument("--oneline", action="store_true")
+    s.set_defaults(func=cmd_unread)
+
+    s = sub.add_parser("show-msg", help="show one messages-table row")
+    s.add_argument("id", type=int)
+    s.set_defaults(func=cmd_show_msg)
+
+    s = sub.add_parser("ack", help="mark a message delivered")
+    s.add_argument("id", type=int)
+    s.set_defaults(func=cmd_ack)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.db:
+        os.environ["ARENA_BOARD"] = args.db
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

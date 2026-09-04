@@ -3,7 +3,10 @@ profiles/*
 !profiles/.gitkeep
 
 # Secrets / runtime
-run/
+run/*
+!run/.gitkeep
+swaygentrc/server/run/*
+!swaygentrc/server/run/.gitkeep
 .env
 .env.*
 !.env.example
@@ -12,6 +15,7 @@ run/
 __pycache__/
 *.py[cod]
 .venv/
+.venv-winctl/
 venv/
 
 # Node
@@ -29,3 +33,18 @@ npm-debug.log*
 *.log
 .cache/
 tmp/
+
+# Android build outputs (ship release APK under swaygentrc/app/ only)
+swaygentrc/android/local.properties
+swaygentrc/android/.gradle/
+swaygentrc/android/app/build/
+swaygentrc/android/vernacular/build/
+swaygentrc/android/apks/*
+!swaygentrc/android/apks/.gitkeep
+
+# Local scratch / binaries that must not ship
+host-full.png
+shell2.exe
+*.exe
+*.apk
+!swaygentrc/app/swaygentrc_v*.apk
