@@ -67,29 +67,10 @@ git clone https://github.com/backdoorsecurity/swaygentic.git/
 cd swaygentic/
 ./install.sh --non-interactive --skip-adb --verbose
 ```
-- install flags:
-./install.sh [options]
 
-  --non-interactive   No prompts. Skip creating missing run/xai.env.
-  --skip-adb          Do not try ADB. Print APK + credentials paths instead.
-  --adb               Attempt the ADB phone path (Phase 2 stub: Overrides --skip-adb.
-  --skip-wayvnc       Do not install, enable, or start wayvnc.service.
-  --skip-smoke        Do not run scripts/smoke_swaygentrc.sh.
-  --no-start          Write/enable user units, but do not restart services now.
-  --unsafe-default    Phone agent wrap = swaygentic-unsafe (no jail).
-  --user NAME         Install for NAME instead of the current user (re-exec as that user).
-  --verbose           Echo each step command as it runs
-  -h, --help          Show help and exit.
+Flags: `./install.sh --help`. Run as the target user in a **login session** (`systemctl --user`). Prefer a dedicated account if you do not want to touch your main desktop.
 
-Use a login session as the target user so `systemctl --user` works. Prefer a dedicated account if you do not want to touch your main desktop session.
-
-What the installer does:
-
-- Installs `swaygentic` and `swaygentic-unsafe` into `~/.local/bin`
-- Writes user units for `swaygentrc` and `wayvnc`, enables linger
-- Bootstraps phone credentials under `swaygentrc/server/run/`
-- Runs `scripts/smoke_swaygentrc.sh` when a grok binary is present
-- Prints the phone APK path (sideload by hand; ADB is Phase 2)
+Installer: launchers in `~/.local/bin`, `swaygentrc` + `wayvnc` user units + linger, phone credentials, optional smoke, prints APK path (ADB later).
 
 ### API key
 
@@ -335,23 +316,11 @@ Escape hatch for debugging: `swaygentic-unsafe` or `SWAYGENTIC_OFF=1`.
 ## Layout
 
 ```text
-install.sh                 ← clone entrypoint
-README.md
-AGENTS.md
-docs/leo-byom.md
-docs/acp.md
-mcp/swaygentic             ← jail entry → real grok
-mcp/jail-run.sh
-mcp/jail-denied.sh
-mcp/ensure_brave.sh
-mcp/launch.sh
-mcp/run_brave_mcp.sh
-mcp/brave_flags.sh
-mcp/winctl/                ← guest desktop MCP
-swaygentrc/                ← phone APK + HTTP→ACP facade
-swaygentrc/app/swaygentrc_v0.9.4.apk
-.grok/config.toml
-run/xai.env                ← local secret; not committed
-proxy/leo_proxy.py
-scripts/smoke_xai.sh (and other smoke_ scripts)
+install.sh              ← clone entrypoint
+README.md  AGENTS.md
+docs/leo-byom.md  docs/acp.md
+mcp/                    ← swaygentic jail, Brave, winctl
+swaygentrc/             ← phone APK + HTTP→ACP facade
+scripts/smoke_*.sh
+run/xai.env             ← local secret; not committed
 ```

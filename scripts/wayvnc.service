@@ -1,6 +1,6 @@
 [Unit]
 Description=wayvnc on Tailscale (swaygentrc VIEW)
-Documentation=file://@REPO_ROOT@/docs/haven-companion.md
+Documentation=file://@REPO_ROOT@/README.md
 After=network-online.target
 Wants=network-online.target
 

@@ -103,27 +103,11 @@ args+=(
 if [[ -t 0 || "${SWAYGENTIC_BWRAP_DIE_WITH_PARENT:-0}" == "1" ]]; then
   args+=(--die-with-parent)
 fi
-# Snapshot dir lives on the host; jail --tmpfs /tmp would hide it otherwise.
-SWG_SNAPSHOT_AGENT=browser
-case "$(id -un)" in
-  forge|loom|bravectl|winctl) SWG_SNAPSHOT_AGENT="$(id -un)" ;;
-  browser|judge) SWG_SNAPSHOT_AGENT=advisor ;;
-  *) SWG_SNAPSHOT_AGENT="$(id -un)" ;;
-esac
-SWG_SNAPSHOT_DIR="/tmp/snapshots/${SWG_SNAPSHOT_AGENT}"
-if [[ -x "$ROOT/scripts/ensure_snapshots.sh" ]]; then
-  "$ROOT/scripts/ensure_snapshots.sh" >/dev/null || true
-else
-  mkdir -p "$SWG_SNAPSHOT_DIR" || true
-fi
-
 args+=(
   --clearenv
   --proc /proc
   --dev /dev
   --tmpfs /tmp
-  --dir /tmp/snapshots
-  --bind-try /tmp/snapshots /tmp/snapshots
   --tmpfs "$HOME"
   --dir "$RUNTIME_DIR"
   --ro-bind /usr /usr
@@ -267,7 +251,6 @@ args+=(
   --setenv DBUS_SESSION_BUS_ADDRESS "unix:path=$RUNTIME_DIR/bus"
   --setenv container bwrap
   --setenv SWAYGENTIC_JAIL 1
-  --setenv SWG_SNAPSHOT_DIR "$SWG_SNAPSHOT_DIR"
   --setenv QT_QPA_PLATFORM wayland
   --setenv GDK_BACKEND wayland
   --chdir "${PWD:-$ROOT}"
@@ -290,7 +273,6 @@ ENV_PASSTHROUGH=(
   SWG_PROFILE_DIR SWG_BRAVE_BIN SWG_CONTAINER SWG_DEBUG_PORT SWG_DEBUG_HOST
   SWG_NO_SANDBOX SWG_HEADLESS SWG_FORCE_QUIT_BRAVE SWG_TEMPORARY_CONTAINER
   SWG_EXTRA_BRAVE_ARGS SWG_OZONE_PLATFORM SWG_VIEWPORT SWG_TEST_TYPE
-  SWG_SNAPSHOT_DIR
   SWG_WINCTL_PYTHON SWG_WINCTL_SMOKE_SOFT
   # Guest desktop (winctl) — overrides must survive --clearenv
   WINCTL_VNC WINCTL_DOMAIN WINCTL_LOOK_FORMAT

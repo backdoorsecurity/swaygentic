@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Phase 1 — host installer for swaygentic + swaygentrc phone face.
-# Launchers, user units, credentials bootstrap, smoke; ADB is Phase 2 (stub here).
-#
-# Entry point: repo-root ./install.sh (same flags; scripts/install.sh wraps it).
-# Repo root and home are derived at runtime ($ROOT from this script, $HOME /
-# getent for the target user). Do not hard-code user home directories here.
+# Host installer: swaygentic launchers + swaygentrc (+ optional wayvnc).
+# Entry: repo-root ./install.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,37 +17,27 @@ SKIP_WAYVNC=0
 SKIP_SMOKE=0
 UNSAFE_DEFAULT=0
 DO_ADB=0
-TARGET_USER=""
 START_SERVICES=1
 VERBOSE="${INSTALL_VERBOSE:-0}"
 STEP="init"
 
 usage() {
   cat <<'EOF'
-Usage: install.sh | install_swaygentic_system.sh [options]
+Usage: ./install.sh [options]
 
-  Host install for swaygentic Build + swaygentrc phone API (+ optional wayvnc).
-  Missing host packages (bubblewrap, wayvnc, …) are installed via apt/dnf/pacman/zypper.
-  Failures always print step, line, command, and paths.
+  Host install for swaygentic + swaygentrc (+ optional wayvnc).
+  Run as the target user in a login session (systemctl --user).
 
 Options:
   --non-interactive   No prompts; skip missing xai.env; imply --skip-adb unless --adb
-  --skip-adb          Do not attempt ADB; print APK + credentials paths (Phase 1 default)
-  --adb               Attempt ADB phone path (Phase 2 stub until implemented)
+  --skip-adb          Print APK + credentials paths (default with --non-interactive)
+  --adb               Attempt ADB phone path (stub)
   --skip-wayvnc       Do not install/enable wayvnc.service
-  --skip-smoke        Do not run scripts/smoke_swaygentrc.sh
-  --no-start          Install units / enable, but do not restart services now
-  --unsafe-default    Phone agent wrap = swaygentic-unsafe (still installs both launchers)
-  --user NAME         Target account (default: current). Re-exec as that user if needed.
-  --verbose           Echo each step command (or INSTALL_VERBOSE=1)
-  -h, --help          Show this help
-
-Examples:
-  ./install.sh --skip-adb
-  ./install.sh --non-interactive --skip-adb --verbose
-  # Log in as the target user (prefer a login session for systemctl --user):
-  git clone https://github.com/backdoorsecurity/swaygentic/
-  cd swaygentic && ./install.sh --non-interactive --skip-adb --verbose
+  --skip-smoke        Skip scripts/smoke_swaygentrc.sh
+  --no-start          Enable units but do not restart now
+  --unsafe-default    Phone wrap = swaygentic-unsafe
+  --verbose           Echo each run command
+  -h, --help
 EOF
 }
 
@@ -59,7 +45,7 @@ log()  { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 die()  {
   printf 'ERROR: %s\n' "$*" >&2
-  printf 'ERROR: step=%s user=%s ROOT=%s\n' "${STEP:-?}" "${TARGET_USER:-?}" "$ROOT" >&2
+  printf 'ERROR: step=%s user=%s ROOT=%s\n' "${STEP:-?}" "$(id -un)" "$ROOT" >&2
   printf 'ERROR: HOME_DIR=%s UNIT_DIR=%s\n' "${HOME_DIR:-?}" "${UNIT_DIR:-?}" >&2
   exit 1
 }
@@ -80,11 +66,8 @@ on_err() {
   local ec=$? line="${1:-?}"
   printf 'ERROR: install failed (exit %s) at line %s of %s\n' \
     "$ec" "$line" "${BASH_SOURCE[0]}" >&2
-  printf 'ERROR: step=%s\n' "${STEP:-?}" >&2
-  printf 'ERROR: command=%s\n' "${BASH_COMMAND:-?}" >&2
-  printf 'ERROR: ROOT=%s\n' "$ROOT" >&2
-  printf 'ERROR: TARGET_USER=%s HOME=%s\n' "${TARGET_USER:-?}" "${HOME:-?}" >&2
-  printf 'ERROR: HOME_DIR=%s XDG_RUNTIME_DIR=%s\n' "${HOME_DIR:-?}" "${XDG_RUNTIME_DIR:-?}" >&2
+  printf 'ERROR: step=%s command=%s\n' "${STEP:-?}" "${BASH_COMMAND:-?}" >&2
+  printf 'ERROR: ROOT=%s HOME=%s HOME_DIR=%s\n' "$ROOT" "${HOME:-?}" "${HOME_DIR:-?}" >&2
   printf 'ERROR: UNIT_DIR=%s CREDENTIALS=%s\n' "${UNIT_DIR:-?}" "${CREDENTIALS:-?}" >&2
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user --no-pager --full status swaygentrc.service 2>&1 | tail -n 30 >&2 || true
@@ -105,9 +88,7 @@ while [[ $# -gt 0 ]]; do
     --unsafe-default) UNSAFE_DEFAULT=1; shift ;;
     --verbose) VERBOSE=1; shift ;;
     --user)
-      [[ $# -ge 2 ]] || die "--user requires NAME"
-      TARGET_USER="$2"
-      shift 2
+      die "--user removed: log in as the target user and run ./install.sh there"
       ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1 (see --help)" ;;
@@ -118,30 +99,7 @@ if [[ "$NON_INTERACTIVE" == 1 && "$DO_ADB" != 1 ]]; then
   SKIP_ADB=1
 fi
 
-CURRENT_USER="$(id -un)"
-if [[ -z "$TARGET_USER" ]]; then
-  TARGET_USER="$CURRENT_USER"
-fi
-
-# Re-exec as target user when installing for someone else.
-if [[ "$TARGET_USER" != "$CURRENT_USER" ]]; then
-  reexec_args=()
-  [[ "$NON_INTERACTIVE" == 1 ]] && reexec_args+=(--non-interactive)
-  [[ "$SKIP_ADB" == 1 ]] && reexec_args+=(--skip-adb)
-  [[ "$DO_ADB" == 1 ]] && reexec_args+=(--adb)
-  [[ "$SKIP_WAYVNC" == 1 ]] && reexec_args+=(--skip-wayvnc)
-  [[ "$SKIP_SMOKE" == 1 ]] && reexec_args+=(--skip-smoke)
-  [[ "$START_SERVICES" == 0 ]] && reexec_args+=(--no-start)
-  [[ "$UNSAFE_DEFAULT" == 1 ]] && reexec_args+=(--unsafe-default)
-  if [[ "$(id -u)" -eq 0 ]]; then
-    if command -v runuser >/dev/null 2>&1; then
-      exec runuser -u "$TARGET_USER" -- "$ROOT/scripts/install_swaygentic_system.sh" "${reexec_args[@]}"
-    fi
-    exec sudo -u "$TARGET_USER" -- "$ROOT/scripts/install_swaygentic_system.sh" "${reexec_args[@]}"
-  fi
-  die "cannot install for user '$TARGET_USER' as '$CURRENT_USER' (re-run as that user, or as root with --user)"
-fi
-
+TARGET_USER="$(id -un)"
 HOME_DIR="${HOME:-$(getent passwd "$TARGET_USER" | cut -d: -f6)}"
 [[ -n "$HOME_DIR" && -d "$HOME_DIR" ]] || die "home directory missing for $TARGET_USER"
 UNIT_DIR="$HOME_DIR/$UNIT_DIR_REL"
@@ -266,7 +224,7 @@ need_cmd npx || warn "npx not on PATH (install Node.js LTS for brave-mcp)"
 if command -v adb >/dev/null 2>&1; then
   log "  ok  adb -> $(command -v adb)"
 else
-  log "  note adb not on PATH (Phase 2 / manual APK install)"
+  log "  note adb not on PATH (manual APK install)"
 fi
 if [[ ! -x "${SWAYGENTRC_GROK_BIN:-$HOME_DIR/.grok/bin/grok}" && ! -x "$HOME_DIR/.grok/downloads/grok-linux-x86_64" ]]; then
   warn "grok binary not found under ~/.grok — install Grok Build before smoke"
@@ -484,13 +442,13 @@ print_phone_paths() {
 
 if [[ "$DO_ADB" == 1 ]]; then
   step adb "ADB path"
-  log "  Phase 2 not implemented yet — printing paths instead"
+  log "  ADB path not implemented yet — printing paths instead"
   print_phone_paths
 elif [[ "$SKIP_ADB" == 1 ]]; then
   print_phone_paths
 else
   if prompt_yn "Install swaygentrc APK over ADB now?" N; then
-    log "  Phase 2 not implemented yet — printing paths instead"
+    log "  ADB path not implemented yet — printing paths instead"
     print_phone_paths
   else
     print_phone_paths

@@ -38,4 +38,4 @@ A second process can `session/new` + `session/prompt` and observe a tool call ag
 - Re-implement Grok Build’s Unix-domain leader socket
 - Put secrets in the ACP URL path
 
-See also: Grok Build user guide `15-agent-mode.md`, and `SCOPE.md` Phase 3.
+See also: Grok Build user guide `15-agent-mode.md`.

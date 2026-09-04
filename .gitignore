@@ -59,7 +59,6 @@ shell2.exe
 *.apk
 !swaygentrc/app/swaygentrc_v*.apk
 
-# dev files
+# local session novels (not product)
 HANDOFF.md
 SCOPE.md
-swaygentrc/SWAYGENTRC.md

@@ -14,15 +14,12 @@ Phone APK  --Bearer-->  swaygentrc HTTP (Tailscale, persisted high port)
 
 ## Install (host)
 
-One-shot host setup (launchers, `swaygentrc` + `wayvnc` user units, credentials, smoke):
-
 ```bash
-cd ~/swaygentic
-./scripts/install_swaygentic_system.sh --skip-adb
-# ./scripts/install_swaygentic_system.sh --non-interactive --skip-adb
+cd /path/to/swaygentic
+./install.sh --non-interactive --skip-adb
 ```
 
-Living plan / resume: [`SWAYGENTRC.md`](./SWAYGENTRC.md).
+Flags: `./install.sh --help`. Short resume: [`SWAYGENTRC.md`](./SWAYGENTRC.md).
 
 ## Start (foreground)
 
