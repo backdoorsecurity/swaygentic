@@ -34,11 +34,17 @@ npm-debug.log*
 .cache/
 tmp/
 
-# Android build outputs (ship release APK under swaygentrc/app/ only)
+# Android — source under swaygentrc/android/ is tracked (open source).
+# Ignore only machine-local / build outputs; keep gradle wrapper + src/.
 swaygentrc/android/local.properties
 swaygentrc/android/.gradle/
-swaygentrc/android/app/build/
-swaygentrc/android/vernacular/build/
+swaygentrc/android/.kotlin/
+swaygentrc/android/.cxx/
+swaygentrc/android/captures/
+swaygentrc/android/.idea/
+swaygentrc/android/*.iml
+swaygentrc/android/app/*.iml
+swaygentrc/android/**/build/
 swaygentrc/android/apks/*
 !swaygentrc/android/apks/.gitkeep
 
@@ -46,5 +52,11 @@ swaygentrc/android/apks/*
 host-full.png
 shell2.exe
 *.exe
+# Built APKs stay out of git except the release under swaygentrc/app/
 *.apk
 !swaygentrc/app/swaygentrc_v*.apk
+
+# dev files
+HANDOFF.md
+SCOPE.md
+swaygentrc/SWAYGENTRC.md
