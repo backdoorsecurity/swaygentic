@@ -15,8 +15,9 @@ swaygentrc/server/run/*
 __pycache__/
 *.py[cod]
 .venv/
-.venv-winctl/
+.venv*/
 venv/
+env/
 
 # Node
 node_modules/
