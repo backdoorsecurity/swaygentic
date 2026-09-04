@@ -1,12 +1,9 @@
 # Project rules
 
-**Session start:** read `HANDOFF.md` first (live status + how to run), then `SCOPE.md` before any architectural edit. **Current goal: one-shot installer** (repo-root `./install.sh`). Arena builders/advisor: `/srv/arena/docs/STARTUP.md` when that host is in use.
-
 - Faces: Brave Leo BYOM (human chat via xAI Chat Completions); Grok Build (ACP + MCP); phone (swaygentrc HTTP/SSE + VIEW).
-- Do not fork Brave / Chromium. Do not add X11. Do not invent a custom FIFO protocol.
 - Prefer invoking Build via **`swaygentic`** (jail wrapper around real `grok`) so agent + browser share a bubblewrap jail. Do not rename/replace `~/.grok/bin/grok`. Jail hides most of `$HOME` (no host `~/.cache` / `~/.npm`; **does** bind `~/.pki`, `~/.ZAP`, `~/.local/share/foxyproxy` for Brave NSS / ZAP / FoxyProxy); blacklists `sudo`/`ssh`/`docker`/`systemctl`/… via `mcp/jail-denied.sh`. Escape hatch: **`swaygentic-unsafe`** (or `SWAYGENTIC_OFF=1`) runs host grok with no jail.
 - Agent pipe = ACP (`grok agent stdio` or `grok agent serve` on 127.0.0.1).
-- Browser: we own Brave (`mcp/ensure_brave.sh` + loopback DevTools on `127.0.0.1:9222` — TCP, not a named pipe); MCP attaches (`brave-mcp` via `mcp/run_brave_mcp.sh`). In-jail Brave uses `--no-sandbox` + `--test-type`.
+- Browser: we own Brave (`mcp/ensure_brave.sh` + loopback DevTools on `127.0.0.1:9222`; MCP attaches (`brave-mcp` via `mcp/run_brave_mcp.sh`). In-jail Brave uses `--no-sandbox` + `--test-type`.
 - Open / new tab: always `mcp/launch.sh '<spec>'` (alias `mcp/new_tab.sh`) so Brave **tab containers** apply. Specs: `https://url`, `misc:https://url`, `brave-browser-nightly:misc:https://url`. Default container `$SWG_CONTAINER` (`misc`). Do **not** use `brave-devtools__new_page` when a container is required.
 - Snapshots: `filePath=/tmp/snapshots/<agent>/…` (`bravectl`/`winctl`/`advisor`; `browser` → `advisor`). Jail binds that tree; host `/tmp` is otherwise a private tmpfs.
 - Browser speed: one `take_snapshot` per **new URL**; `includeSnapshot: false` on click; prefer `evaluate_script` when the a11y tree is noisy (shoutbox). Do not paste trees onto the board.
@@ -35,7 +32,7 @@ Successful tools may return a screenshot. Errors start with `Error:` — read th
 3. After launch / click / navigate / submit: `take_screenshot` when you need to **see** the page.
 4. Click/type/fill via brave-devtools. Do not use `run_terminal_cmd` with xdotool, wdotool, or ad-hoc Chromium flags.
 
-### Guest desktop (winctl)
+### Nested Guest desktop (winctl)
 
 1. `win_status` — text only; confirm VNC + domain.
 2. `win_look` — see the guest; never guess click coords.
